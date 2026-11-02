@@ -72,11 +72,7 @@ public class JoyrunHook implements IXposedHookLoadPackage {
         String pkg = lpparam.packageName;
         currentPackage = pkg;
 
-        if (!"co.runner.app".equals(pkg) &&
-                !"android".equals(pkg) &&
-                !"com.heytap.health".equals(pkg) &&
-                !"com.oplus.healthservice".equals(pkg) &&
-                !"com.oplus.pedometer".equals(pkg)) {
+        if (!ConfigStore.isTargetPackage(pkg)) {
             return;
         }
 

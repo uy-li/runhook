@@ -41,8 +41,13 @@ public class MainActivity extends AppCompatActivity {
         RangeSlider rangeSlider = findViewById(R.id.range_slider);
         TextView tvSliderValue = findViewById(R.id.tv_slider_value);
         
-        float minVal = sharedPrefs.getFloat("min_cadence", 172.0f);
-        float maxVal = sharedPrefs.getFloat("max_cadence", 182.0f);
+        float minVal = ConfigStore.clampCadence(sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN));
+        float maxVal = ConfigStore.clampCadence(sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX));
+        if (maxVal < minVal) {
+            float swap = minVal;
+            minVal = maxVal;
+            maxVal = swap;
+        }
         rangeSlider.setValues(minVal, maxVal);
         tvSliderValue.setText((int) minVal + " - " + (int) maxVal);
 
@@ -50,12 +55,9 @@ public class MainActivity extends AppCompatActivity {
             float min = slider.getValues().get(0);
             float max = slider.getValues().get(1);
             tvSliderValue.setText((int) min + " - " + (int) max);
-            
-            // 实时保存到 SharedPreferences
-            sharedPrefs.edit()
-                    .putFloat("min_cadence", min)
-                    .putFloat("max_cadence", max)
-                    .apply();
+            if (!fromUser) return;
+            // commit，避免进程马上被杀掉时 apply 还没落盘。
+            ConfigStore.saveCadence(this, min, max);
         });
 
         // 注册现代的 ActivityResultCallback 处理悬浮窗授权回调

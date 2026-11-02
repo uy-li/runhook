@@ -71,4 +71,12 @@ public class StepAccumulatorTest {
         acc.advance(100f, 1_000L + (long) ((StepAccumulator.MAX_GAP_SEC + 3600f) * 1000f), true, 1f);
         assertEquals(StepAccumulator.MAX_GAP_SEC, acc.boost, 0.1f);
     }
+
+    @Test
+    public void cadenceClampRejectsNaNAndOutOfRange() {
+        assertEquals(ConfigStore.CADENCE_MIN, ConfigStore.clampCadence(Float.NaN), 0.001f);
+        assertEquals(ConfigStore.CADENCE_MIN, ConfigStore.clampCadence(10f), 0.001f);
+        assertEquals(ConfigStore.CADENCE_MAX, ConfigStore.clampCadence(400f), 0.001f);
+        assertEquals(180f, ConfigStore.clampCadence(180f), 0.001f);
+    }
 }

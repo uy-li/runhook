@@ -21,6 +21,6 @@ public class ExampleInstrumentedTest {
     public void useAppContext() {
         // Context of the app under test.
         Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        assertEquals("com.yijin.joyrunhook", appContext.getPackageName());
+        assertEquals("com.uy_li.runhook", appContext.getPackageName());
     }
 }
