@@ -148,8 +148,7 @@ public class MainActivity extends AppCompatActivity {
                 os.writeBytes("exit\n");
                 os.flush();
             }
-            if (!process.waitFor(8, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
+            if (!waitForExit(process, 8000)) {
                 return false;
             }
             return process.exitValue() == 0;
@@ -160,6 +159,26 @@ public class MainActivity extends AppCompatActivity {
                 process.destroy();
             }
         }
+    }
+
+    /** waitFor(timeout) 和 destroyForcibly 都是 API 26 才有。 */
+    private boolean waitForExit(Process process, long timeoutMs) throws InterruptedException {
+        if (Build.VERSION.SDK_INT >= 26) {
+            if (process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) return true;
+            process.destroyForcibly();
+            return false;
+        }
+        Thread killer = new Thread(() -> {
+            try {
+                Thread.sleep(timeoutMs);
+                process.destroy();
+            } catch (InterruptedException ignored) {
+            }
+        }, "su-timeout");
+        killer.start();
+        process.waitFor();
+        killer.interrupt();
+        return true;
     }
 
     private void startFloatingServiceAndFinish() {
