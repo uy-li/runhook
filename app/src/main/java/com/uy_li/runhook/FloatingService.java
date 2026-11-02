@@ -1,14 +1,23 @@
 package com.uy_li.runhook;
 
 import android.annotation.SuppressLint;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.ServiceInfo;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -17,13 +26,51 @@ import android.view.WindowManager;
 import android.widget.Button;
 
 public class FloatingService extends Service {
+    private static final String ACTION_TOGGLE = "com.uy_li.TOGGLE_CADENCE";
+    private static final String CHANNEL_ID = "runhook_overlay";
+    private static final int NOTIFICATION_ID = 1001;
+
     private WindowManager windowManager;
     private View floatingView;
-    
-    // 明确定义工作状态变量
-    private boolean isWorking = true; // 默认与 Hook 类中保持一致开启
-    // 防抖动时间戳
+    private WindowManager.LayoutParams layoutParams;
+    private Button toggleButton;
+    private GradientDrawable toggleShape;
+
+    // 跟配置文件一致，默认关闭。不能再写死成开。
+    private boolean isWorking = false;
     private long lastClickTime = 0;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable reattachRunnable = new Runnable() {
+        @Override
+        public void run() {
+            reattachFloatingView();
+        }
+    };
+    private final Runnable syncRunnable = new Runnable() {
+        @Override
+        public void run() {
+            // 健康 App 被杀掉后新进程收不到上一次点击。定时把持久化状态再送一遍。
+            broadcastState(true);
+            mainHandler.postDelayed(this, 15000);
+        }
+    };
+
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || intent.getAction() == null) return;
+            String action = intent.getAction();
+            if (Intent.ACTION_SCREEN_OFF.equals(action)
+                    || Intent.ACTION_SCREEN_ON.equals(action)
+                    || Intent.ACTION_USER_PRESENT.equals(action)) {
+                // 自动锁屏会把非前台应用的悬浮窗从 WindowManager 里摘掉，解锁后要自己加回去。
+                scheduleReattach();
+            }
+            if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_USER_PRESENT.equals(action)) {
+                broadcastState(true);
+            }
+        }
+    };
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -34,21 +81,109 @@ public class FloatingService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        ConfigStore.ensureDefaultOff(this);
+        isWorking = ConfigStore.isEnabled(this);
+        startInForeground();
+
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (windowManager != null) {
+            createFloatingView();
+        }
+        registerScreenReceiver();
+        // 把已经在跑的 Hook 进程同步到持久化状态。静默发送，避免每个目标应用都弹 Toast。
+        mainHandler.post(syncRunnable);
+    }
 
-        // 创建悬浮按钮
-        Button button = new Button(this);
-        button.setText("步频\nON");
-        button.setTextColor(Color.WHITE);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        
-        // 设置圆形背景
-        GradientDrawable shape = new GradientDrawable();
-        shape.setShape(GradientDrawable.OVAL);
-        shape.setColor(Color.parseColor("#4CAF50")); // 默认绿色
-        button.setBackground(shape);
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        startInForeground();
+        if (floatingView == null) {
+            if (windowManager != null) createFloatingView();
+        } else if (windowManager != null && !floatingView.isAttachedToWindow()) {
+            reattachFloatingView();
+        }
+        return START_STICKY;
+    }
 
-        // 悬浮窗参数配置
+    private void startInForeground() {
+        try {
+            Notification notification = buildNotification();
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
+        } catch (Throwable ignored) {
+            // startForegroundService 发出去之后如果这里失败，系统会在几秒后把进程杀掉。
+            stopSelf();
+        }
+    }
+
+    private Notification buildNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    getString(R.string.fgs_channel_name),
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription(getString(R.string.fgs_channel_desc));
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null) nm.createNotificationChannel(channel);
+        }
+
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(this, CHANNEL_ID)
+                : new Notification.Builder(this);
+        return builder
+                .setSmallIcon(R.drawable.ic_stat_cadence)
+                .setContentTitle(getString(R.string.fgs_notification_title))
+                .setContentText(getString(R.string.fgs_notification_text))
+                .setOngoing(true)
+                .build();
+    }
+
+    @SuppressLint({"ClickableViewAccessibility", "UnspecifiedRegisterReceiverFlag"})
+    private void registerScreenReceiver() {
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_USER_PRESENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(screenReceiver, filter);
+        }
+    }
+
+    private void scheduleReattach() {
+        mainHandler.removeCallbacks(reattachRunnable);
+        mainHandler.post(reattachRunnable);
+        mainHandler.postDelayed(reattachRunnable, 400);
+        mainHandler.postDelayed(reattachRunnable, 1200);
+    }
+
+    private void reattachFloatingView() {
+        if (floatingView == null || windowManager == null || layoutParams == null) return;
+        try {
+            windowManager.removeViewImmediate(floatingView);
+        } catch (Throwable ignored) {
+        }
+        try {
+            windowManager.addView(floatingView, layoutParams);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void createFloatingView() {
+        toggleButton = new Button(this);
+        toggleShape = new GradientDrawable();
+        toggleShape.setShape(GradientDrawable.OVAL);
+        applyButtonAppearance();
+        toggleButton.setTextColor(Color.WHITE);
+        toggleButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        toggleButton.setBackground(toggleShape);
+
         int layoutFlag;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
@@ -57,20 +192,18 @@ public class FloatingService extends Service {
         }
 
         int size = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 60, getResources().getDisplayMetrics());
-        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+        layoutParams = new WindowManager.LayoutParams(
                 size,
                 size,
                 layoutFlag,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
         );
+        layoutParams.gravity = Gravity.TOP | Gravity.START;
+        layoutParams.x = 0;
+        layoutParams.y = 300;
 
-        params.gravity = Gravity.TOP | Gravity.START;
-        params.x = 0;
-        params.y = 300; // 初始位置靠下一点，避免挡住顶部状态栏
-
-        // 拖动和点击事件处理
-        button.setOnTouchListener(new View.OnTouchListener() {
+        toggleButton.setOnTouchListener(new View.OnTouchListener() {
             private int initialX;
             private int initialY;
             private float initialTouchX;
@@ -81,8 +214,8 @@ public class FloatingService extends Service {
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        initialX = params.x;
-                        initialY = params.y;
+                        initialX = layoutParams.x;
+                        initialY = layoutParams.y;
                         initialTouchX = event.getRawX();
                         initialTouchY = event.getRawY();
                         isClick = true;
@@ -93,42 +226,32 @@ public class FloatingService extends Service {
                         if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
                             isClick = false;
                         }
-                        params.x = initialX + deltaX;
-                        params.y = initialY + deltaY;
-                        windowManager.updateViewLayout(floatingView, params);
+                        layoutParams.x = initialX + deltaX;
+                        layoutParams.y = initialY + deltaY;
+                        if (windowManager != null && floatingView.isAttachedToWindow()) {
+                            try {
+                                windowManager.updateViewLayout(floatingView, layoutParams);
+                            } catch (Throwable ignored) {
+                            }
+                        }
                         return true;
                     case MotionEvent.ACTION_UP:
                         if (isClick) {
-                            // 增加防抖动逻辑：500毫秒内只能点击一次
                             long currentTime = System.currentTimeMillis();
                             if (currentTime - lastClickTime < 500) {
                                 return true;
                             }
                             lastClickTime = currentTime;
 
-                            // 切换工作状态
                             isWorking = !isWorking;
-                            if (isWorking) {
-                                shape.setColor(Color.parseColor("#4CAF50")); // 绿色
-                                button.setText("步频\nON");
-                            } else {
-                                shape.setColor(Color.parseColor("#F44336")); // 红色
-                                button.setText("步频\nOFF");
-                            }
-                            // 必须重新设置背景才生效
-                            button.setBackground(shape);
-                            
-                            // 实时读取最新的用户配置步频
-                            SharedPreferences sharedPrefs = getSharedPreferences("JoyrunConfig", MODE_PRIVATE);
-                            float minCadence = sharedPrefs.getFloat("min_cadence", 172.0f);
-                            float maxCadence = sharedPrefs.getFloat("max_cadence", 182.0f);
+                            applyButtonAppearance();
+                            toggleButton.setBackground(toggleShape);
 
-                            // 发送精准状态的单次广播
-                            Intent broadcastIntent = new Intent("com.uy_li.TOGGLE_CADENCE");
-                            broadcastIntent.putExtra("STATE", isWorking);
-                            broadcastIntent.putExtra("MIN_CADENCE", minCadence);
-                            broadcastIntent.putExtra("MAX_CADENCE", maxCadence);
-                            sendBroadcast(broadcastIntent);
+                            SharedPreferences sharedPrefs = ConfigStore.prefs(FloatingService.this);
+                            float minCadence = sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN);
+                            float maxCadence = sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX);
+                            ConfigStore.setEnabled(FloatingService.this, isWorking, minCadence, maxCadence);
+                            broadcastState(false);
                         }
                         return true;
                 }
@@ -136,15 +259,62 @@ public class FloatingService extends Service {
             }
         });
 
-        floatingView = button;
-        windowManager.addView(floatingView, params);
+        floatingView = toggleButton;
+        try {
+            windowManager.addView(floatingView, layoutParams);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void applyButtonAppearance() {
+        if (toggleButton == null || toggleShape == null) return;
+        if (isWorking) {
+            toggleShape.setColor(Color.parseColor("#4CAF50"));
+            toggleButton.setText("步频\nON");
+        } else {
+            toggleShape.setColor(Color.parseColor("#F44336"));
+            toggleButton.setText("步频\nOFF");
+        }
+    }
+
+    private void broadcastState(boolean quiet) {
+        SharedPreferences sharedPrefs = ConfigStore.prefs(this);
+        float minCadence = sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN);
+        float maxCadence = sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX);
+        String token = ConfigStore.ensureToken(this);
+        for (String pkg : ConfigStore.TARGET_PACKAGES) {
+            Intent broadcastIntent = new Intent(ACTION_TOGGLE);
+            broadcastIntent.setPackage(pkg);
+            broadcastIntent.putExtra("STATE", isWorking);
+            broadcastIntent.putExtra("MIN_CADENCE", minCadence);
+            broadcastIntent.putExtra("MAX_CADENCE", maxCadence);
+            broadcastIntent.putExtra("QUIET", quiet);
+            broadcastIntent.putExtra("TOKEN", token);
+            try {
+                sendBroadcast(broadcastIntent);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Override
     public void onDestroy() {
-        super.onDestroy();
-        if (floatingView != null) {
-            windowManager.removeView(floatingView);
+        mainHandler.removeCallbacks(reattachRunnable);
+        mainHandler.removeCallbacks(syncRunnable);
+        try {
+            unregisterReceiver(screenReceiver);
+        } catch (Throwable ignored) {
         }
+        if (floatingView != null && windowManager != null) {
+            try {
+                windowManager.removeView(floatingView);
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+        } catch (Throwable ignored) {
+        }
+        super.onDestroy();
     }
 }

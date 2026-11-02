@@ -1,3 +1,12 @@
 <resources>
     <string name="app_name">步频引擎</string>
+    <string name="fgs_channel_name">步频引擎</string>
+    <string name="fgs_channel_desc">保持步频悬浮窗在锁屏后继续显示</string>
+    <string name="fgs_notification_title">步频引擎运行中</string>
+    <string name="fgs_notification_text">悬浮窗开关已就绪。关闭后不会再改步数</string>
+    <string name="theme_switch_to_dark">切换到深色主题</string>
+    <string name="theme_switch_to_light">切换到浅色主题</string>
+    <string name="github_project_name">runhook</string>
+    <string name="github_project_url">https://github.com/uy-li/runhook</string>
+    <string name="open_github_project">在浏览器中打开 runhook 的 GitHub 项目</string>
 </resources>

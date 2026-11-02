@@ -1,5 +1,12 @@
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
+}
+
+fun runhookSetting(name: String): String? {
+    System.getenv(name)?.takeIf { it.isNotBlank() }?.let { return it }
+    return providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
 }
 
 android {
@@ -14,14 +21,30 @@ android {
         applicationId = "com.uy_li.runhook"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    val keystorePath = runhookSetting("RUNHOOK_KEYSTORE_FILE")
+    if (keystorePath != null) {
+        signingConfigs {
+            create("release") {
+                val path = File(keystorePath)
+                storeFile = if (path.isAbsolute) path else rootProject.file(keystorePath)
+                storePassword = runhookSetting("RUNHOOK_KEYSTORE_PASSWORD")
+                keyAlias = runhookSetting("RUNHOOK_KEY_ALIAS") ?: "fbly"
+                keyPassword = runhookSetting("RUNHOOK_KEY_PASSWORD") ?: storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (keystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
