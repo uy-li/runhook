@@ -1,9 +1,11 @@
 package com.uy_li.runhook;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Paint;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -76,6 +78,15 @@ public class MainActivity extends AppCompatActivity {
         );
 
         // 绑定按钮事件
+        MaterialButton btnTheme = findViewById(R.id.btn_theme);
+        boolean dark = ConfigStore.isDarkTheme(this);
+        btnTheme.setText(dark ? R.string.theme_switch_to_light : R.string.theme_switch_to_dark);
+        btnTheme.setOnClickListener(v -> ConfigStore.setDarkTheme(this, !ConfigStore.isDarkTheme(this)));
+
+        TextView githubLink = findViewById(R.id.link_github);
+        githubLink.setPaintFlags(githubLink.getPaintFlags() | Paint.UNDERLINE_TEXT_FLAG);
+        githubLink.setOnClickListener(v -> openGithub());
+
         MaterialButton btnStart = findViewById(R.id.btn_start);
         btnStart.setOnClickListener(v -> {
             if (!commitCadenceFromInputs()) {
@@ -181,6 +192,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateSummary(float min, float max) {
         tvSliderValue.setText(formatCadence(min) + " - " + formatCadence(max));
+    }
+
+    private void openGithub() {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.github_project_url))));
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "无法打开浏览器", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void checkOverlayPermissionAndStart() {

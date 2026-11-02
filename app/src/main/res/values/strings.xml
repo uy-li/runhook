@@ -4,4 +4,7 @@
     <string name="fgs_channel_desc">保持步频悬浮窗在锁屏后继续显示</string>
     <string name="fgs_notification_title">步频引擎运行中</string>
     <string name="fgs_notification_text">悬浮窗开关已就绪。关闭后不会再改步数</string>
+    <string name="theme_switch_to_dark">深色</string>
+    <string name="theme_switch_to_light">浅色</string>
+    <string name="github_project_url">https://github.com/uy-li/runhook</string>
 </resources>

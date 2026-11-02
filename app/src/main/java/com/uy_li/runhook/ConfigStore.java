@@ -4,6 +4,8 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import androidx.appcompat.app.AppCompatDelegate;
+
 import java.io.File;
 import java.util.UUID;
 
@@ -20,6 +22,7 @@ public final class ConfigStore {
     public static final float DEFAULT_MIN = 172f;
     public static final float DEFAULT_MAX = 182f;
     public static final String KEY_TOKEN = "control_token";
+    public static final String KEY_DARK_THEME = "dark_theme";
 
     /** 代码实际会 Hook 的包，和 res/values/arrays.xml 里的 xposedscope 保持一致。 */
     public static final String[] TARGET_PACKAGES = {
@@ -56,6 +59,28 @@ public final class ConfigStore {
 
     public static boolean isEnabled(Context context) {
         return prefs(context).getBoolean(KEY_ENABLED, false);
+    }
+
+    /** 默认浅色。只有用户点过右上角按钮才进入深色。 */
+    public static boolean isDarkTheme(Context context) {
+        return prefs(context).getBoolean(KEY_DARK_THEME, false);
+    }
+
+    public static void setDarkTheme(Context context, boolean dark) {
+        prefs(context).edit().putBoolean(KEY_DARK_THEME, dark).commit();
+        makeReadable(context);
+        applyNightMode(dark);
+    }
+
+    public static void applyStoredNightMode(Context context) {
+        applyNightMode(isDarkTheme(context));
+    }
+
+    private static void applyNightMode(boolean dark) {
+        int mode = dark ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_NO;
+        if (AppCompatDelegate.getDefaultNightMode() != mode) {
+            AppCompatDelegate.setDefaultNightMode(mode);
+        }
     }
 
     /** 没有写过开关时明确落成关闭，避免 Hook 侧把“读不到”和“用户开过”混在一起。 */
