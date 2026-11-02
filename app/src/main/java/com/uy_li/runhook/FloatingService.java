@@ -29,15 +29,6 @@ public class FloatingService extends Service {
     private static final String ACTION_TOGGLE = "com.uy_li.TOGGLE_CADENCE";
     private static final String CHANNEL_ID = "runhook_overlay";
     private static final int NOTIFICATION_ID = 1001;
-    private static final String[] TARGET_PACKAGES = {
-            "android",
-            "com.heytap.health",
-            "com.oplus.healthservice",
-            "com.oplus.pedometer",
-            "co.runner.app",
-            "com.gotokeep.keep",
-            "com.android.healthconnect.controller"
-    };
 
     private WindowManager windowManager;
     private View floatingView;
@@ -95,7 +86,9 @@ public class FloatingService extends Service {
         startInForeground();
 
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-        createFloatingView();
+        if (windowManager != null) {
+            createFloatingView();
+        }
         registerScreenReceiver();
         // 把已经在跑的 Hook 进程同步到持久化状态。静默发送，避免每个目标应用都弹 Toast。
         mainHandler.post(syncRunnable);
@@ -105,8 +98,8 @@ public class FloatingService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         startInForeground();
         if (floatingView == null) {
-            createFloatingView();
-        } else if (!floatingView.isAttachedToWindow()) {
+            if (windowManager != null) createFloatingView();
+        } else if (windowManager != null && !floatingView.isAttachedToWindow()) {
             reattachFloatingView();
         }
         return START_STICKY;
@@ -121,7 +114,8 @@ public class FloatingService extends Service {
                 startForeground(NOTIFICATION_ID, notification);
             }
         } catch (Throwable ignored) {
-            // 前台服务拉不起来时，悬浮窗仍然尽量显示。
+            // startForegroundService 发出去之后如果这里失败，系统会在几秒后把进程杀掉。
+            stopSelf();
         }
     }
 
@@ -141,7 +135,7 @@ public class FloatingService extends Service {
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
         return builder
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_stat_cadence)
                 .setContentTitle(getString(R.string.fgs_notification_title))
                 .setContentText(getString(R.string.fgs_notification_text))
                 .setOngoing(true)
@@ -234,8 +228,11 @@ public class FloatingService extends Service {
                         }
                         layoutParams.x = initialX + deltaX;
                         layoutParams.y = initialY + deltaY;
-                        if (floatingView.isAttachedToWindow()) {
-                            windowManager.updateViewLayout(floatingView, layoutParams);
+                        if (windowManager != null && floatingView.isAttachedToWindow()) {
+                            try {
+                                windowManager.updateViewLayout(floatingView, layoutParams);
+                            } catch (Throwable ignored) {
+                            }
                         }
                         return true;
                     case MotionEvent.ACTION_UP:
@@ -284,13 +281,15 @@ public class FloatingService extends Service {
         SharedPreferences sharedPrefs = ConfigStore.prefs(this);
         float minCadence = sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN);
         float maxCadence = sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX);
-        for (String pkg : TARGET_PACKAGES) {
+        String token = ConfigStore.ensureToken(this);
+        for (String pkg : ConfigStore.TARGET_PACKAGES) {
             Intent broadcastIntent = new Intent(ACTION_TOGGLE);
             broadcastIntent.setPackage(pkg);
             broadcastIntent.putExtra("STATE", isWorking);
             broadcastIntent.putExtra("MIN_CADENCE", minCadence);
             broadcastIntent.putExtra("MAX_CADENCE", maxCadence);
             broadcastIntent.putExtra("QUIET", quiet);
+            broadcastIntent.putExtra("TOKEN", token);
             try {
                 sendBroadcast(broadcastIntent);
             } catch (Throwable ignored) {
