@@ -19,3 +19,8 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# LSPosed loads the class named in assets/xposed_init by reflection.
+# minify is currently off; these rules apply only if it is turned on.
+-keep class com.uy_li.runhook.JoyrunHook { *; }
+-keep class * implements de.robv.android.xposed.IXposedHookLoadPackage { *; }
