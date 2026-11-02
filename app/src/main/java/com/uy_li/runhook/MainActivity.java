@@ -19,11 +19,15 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.slider.RangeSlider;
 
 import java.io.DataOutputStream;
+import java.io.InputStream;
+import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends AppCompatActivity {
 
     private ActivityResultLauncher<Intent> overlayPermissionLauncher;
+    private ActivityResultLauncher<String> notificationPermissionLauncher;
     private SharedPreferences sharedPrefs;
+    private boolean startingService;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -58,6 +62,7 @@ public class MainActivity extends AppCompatActivity {
         overlayPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
+                    startingService = false;
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         if (Settings.canDrawOverlays(this)) {
                             // 授权成功
@@ -69,6 +74,10 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
         );
+        notificationPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> actuallyStartAndBackground()
+        );
 
         // 绑定按钮事件
         MaterialButton btnStart = findViewById(R.id.btn_start);
@@ -76,87 +85,93 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void checkOverlayPermissionAndStart() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            // 第一步：检查是否已经有权限
-            if (Settings.canDrawOverlays(this)) {
-                startFloatingServiceAndFinish();
-                return;
-            }
+        if (startingService) return;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)) {
+            startFloatingServiceAndFinish();
+            return;
+        }
 
-            // 第二步：尝试通过 Root 静默授权
-            boolean rootGranted = grantOverlayPermissionViaRoot();
-            
-            if (rootGranted) {
+        // su 和 Thread.sleep 不能放在主线程上，否则 Magisk 确认框一慢就会 ANR。
+        startingService = true;
+        new Thread(() -> {
+            boolean granted = grantOverlayPermissionViaRoot();
+            if (granted) {
                 try {
-                    // 第三步：等待 300ms 让系统状态刷新
                     Thread.sleep(300);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Thread.currentThread().interrupt();
                 }
-                
-                // 再次检查权限
+            }
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    startingService = false;
+                    return;
+                }
                 if (Settings.canDrawOverlays(this)) {
                     Toast.makeText(this, "已通过 Root 自动授予悬浮窗权限", Toast.LENGTH_SHORT).show();
                     startFloatingServiceAndFinish();
                     return;
                 }
-            }
-
-            // 第四步：优雅降级，跳转到系统设置页面手动授权
-            Toast.makeText(this, "Root 授权失败，请手动开启悬浮窗", Toast.LENGTH_LONG).show();
-            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName()));
-            overlayPermissionLauncher.launch(intent);
-            
-        } else {
-            // Android 6.0 以下默认拥有悬浮窗权限
-            startFloatingServiceAndFinish();
-        }
+                startingService = false;
+                Toast.makeText(this, "Root 授权失败，请手动开启悬浮窗", Toast.LENGTH_LONG).show();
+                Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                overlayPermissionLauncher.launch(intent);
+            });
+        }, "overlay-grant").start();
     }
 
     /**
-     * 尝试通过 Root 执行 appops 命令静默授予悬浮窗权限
+     * 尝试通过 Root 执行 appops 命令静默授予悬浮窗权限。
+     * 必须读掉 su 的输出，否则管道写满后 waitFor 会一直卡住。
      */
     private boolean grantOverlayPermissionViaRoot() {
         Process process = null;
-        DataOutputStream os = null;
         try {
-            // 请求 Root 权限
-            process = Runtime.getRuntime().exec("su");
-            os = new DataOutputStream(process.getOutputStream());
-            
-            // 执行 appops 提权命令
-            String command = "appops set " + getPackageName() + " SYSTEM_ALERT_WINDOW allow\n";
-            os.writeBytes(command);
-            os.writeBytes("exit\n");
-            os.flush();
-            
-            // 等待命令执行完毕并获取退出状态码
-            int exitValue = process.waitFor();
-            return exitValue == 0;
-            
-        } catch (Exception e) {
-            e.printStackTrace();
+            process = new ProcessBuilder("su").redirectErrorStream(true).start();
+            Process running = process;
+            Thread drain = new Thread(() -> {
+                try (InputStream in = running.getInputStream()) {
+                    byte[] buffer = new byte[256];
+                    while (in.read(buffer) != -1) {
+                        // 丢掉 su 的提示，避免缓冲区塞满。
+                    }
+                } catch (Exception ignored) {
+                }
+            }, "su-drain");
+            drain.start();
+
+            try (DataOutputStream os = new DataOutputStream(process.getOutputStream())) {
+                os.writeBytes("appops set " + getPackageName() + " SYSTEM_ALERT_WINDOW allow\n");
+                os.writeBytes("exit\n");
+                os.flush();
+            }
+            if (!process.waitFor(8, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
+        } catch (Exception ignored) {
             return false;
         } finally {
-            try {
-                if (os != null) {
-                    os.close();
-                }
-                if (process != null) {
-                    process.destroy();
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
+            if (process != null) {
+                process.destroy();
             }
         }
     }
 
     private void startFloatingServiceAndFinish() {
+        // 先把通知权限的结果收回来再退到后台，否则系统弹窗会跟着 Activity 一起被丢掉。
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS);
+            return;
         }
+        actuallyStartAndBackground();
+    }
+
+    private void actuallyStartAndBackground() {
+        startingService = false;
         Intent intent = new Intent(this, FloatingService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent);
