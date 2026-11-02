@@ -311,8 +311,8 @@ public class JoyrunHook implements IXposedHookLoadPackage {
 
     /** 调用方需要持有 STATE_LOCK。返回值表示开关是否变化。 */
     private static boolean applyEnabledLocked(boolean enabled, float min, float max) {
-        min = ConfigStore.clampCadence(min);
-        max = ConfigStore.clampCadence(max);
+        min = ConfigStore.sanitizeCadence(min, minCadenceConfig);
+        max = ConfigStore.sanitizeCadence(max, maxCadenceConfig);
         if (max < min) {
             float swap = min;
             min = max;

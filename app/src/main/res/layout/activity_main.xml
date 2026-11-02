@@ -13,103 +13,151 @@
         android:layout_height="match_parent"
         android:padding="24dp">
 
-        <TextView
-            android:id="@+id/tv_title"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="步频引擎"
-            android:textAppearance="?attr/textAppearanceHeadlineLarge"
-            android:textStyle="bold"
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:fillViewport="true"
             app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/btn_start"
             app:layout_constraintStart_toStartOf="parent"
-            android:layout_marginTop="32dp" />
-
-        <TextView
-            android:id="@+id/tv_subtitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="自定义您的跑步频率区间"
-            android:textAppearance="?attr/textAppearanceBodyLarge"
-            android:textColor="?android:attr/textColorSecondary"
-            app:layout_constraintTop_toBottomOf="@id/tv_title"
-            app:layout_constraintStart_toStartOf="parent"
-            android:layout_marginTop="8dp" />
-
-        <TextView
-            android:id="@+id/tv_slider_label"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="动态步频范围 (步/分钟)"
-            android:textAppearance="?attr/textAppearanceTitleMedium"
-            app:layout_constraintTop_toBottomOf="@id/tv_subtitle"
-            app:layout_constraintStart_toStartOf="parent"
-            android:layout_marginTop="48dp" />
-
-        <com.google.android.material.slider.RangeSlider
-            android:id="@+id/range_slider"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:valueFrom="140.0"
-            android:valueTo="220.0"
-            app:layout_constraintTop_toBottomOf="@id/tv_slider_label"
-            android:layout_marginTop="16dp" />
-
-        <TextView
-            android:id="@+id/tv_slider_value"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="172 - 182"
-            android:textAppearance="?attr/textAppearanceTitleLarge"
-            android:textColor="?attr/colorPrimary"
-            android:textStyle="bold"
-            app:layout_constraintTop_toBottomOf="@id/range_slider"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            android:layout_marginTop="8dp" />
-
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:cardCornerRadius="24dp"
-            app:cardElevation="0dp"
-            app:cardBackgroundColor="?attr/colorSecondaryContainer"
-            app:layout_constraintTop_toBottomOf="@id/tv_slider_value"
-            android:layout_marginTop="32dp">
+            app:layout_constraintEnd_toEndOf="parent">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="24dp">
+                android:orientation="vertical">
 
                 <TextView
+                    android:id="@+id/tv_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="💡 推荐数值："
-                    android:textAppearance="?attr/textAppearanceTitleMedium"
-                    android:textColor="?attr/colorOnSecondaryContainer"
+                    android:layout_marginTop="32dp"
+                    android:text="步频引擎"
+                    android:textAppearance="?attr/textAppearanceHeadlineLarge"
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/tv_subtitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="170~185：专业长跑/马拉松黄金步频\n150~160：轻松慢跑\n190+：极限冲刺"
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
-                    android:textColor="?attr/colorOnSecondaryContainer"
-                    android:layout_marginTop="12dp"
-                    android:lineSpacingExtra="6dp" />
+                    android:layout_marginTop="8dp"
+                    android:text="自定义您的跑步频率区间"
+                    android:textAppearance="?attr/textAppearanceBodyLarge"
+                    android:textColor="?android:attr/textColorSecondary" />
+
+                <TextView
+                    android:id="@+id/tv_slider_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="48dp"
+                    android:text="步频范围（步/分钟，可填任意正数）"
+                    android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+                <LinearLayout
+                    android:id="@+id/cadence_inputs"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/input_min"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="8dp"
+                        android:layout_weight="1"
+                        android:hint="最低步频"
+                        app:errorEnabled="true"
+                        app:suffixText="步/分">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_min"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:imeOptions="actionNext"
+                            android:inputType="numberDecimal"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/input_max"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:hint="最高步频"
+                        app:errorEnabled="true"
+                        app:suffixText="步/分">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/et_max"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:imeOptions="actionDone"
+                            android:inputType="numberDecimal"
+                            android:maxLines="1" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_slider_value"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="8dp"
+                    android:text="172 - 182"
+                    android:textAppearance="?attr/textAppearanceTitleLarge"
+                    android:textColor="?attr/colorPrimary"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="32dp"
+                    app:cardBackgroundColor="?attr/colorSecondaryContainer"
+                    app:cardCornerRadius="24dp"
+                    app:cardElevation="0dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="24dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="💡 推荐数值："
+                            android:textAppearance="?attr/textAppearanceTitleMedium"
+                            android:textColor="?attr/colorOnSecondaryContainer"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:lineSpacingExtra="6dp"
+                            android:text="170~185：专业长跑/马拉松黄金步频\n150~160：轻松慢跑\n190+：极限冲刺\n也可以填上面这些范围以外的任意正数"
+                            android:textAppearance="?attr/textAppearanceBodyMedium"
+                            android:textColor="?attr/colorOnSecondaryContainer" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        </androidx.core.widget.NestedScrollView>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_start"
             android:layout_width="match_parent"
             android:layout_height="64dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
             android:text="授权并启动悬浮窗"
             android:textSize="18sp"
             app:cornerRadius="32dp"
             app:layout_constraintBottom_toBottomOf="parent"
-            android:layout_marginBottom="16dp" />
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

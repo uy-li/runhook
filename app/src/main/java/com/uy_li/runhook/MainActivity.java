@@ -8,6 +8,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.inputmethod.EditorInfo;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -16,7 +19,8 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.material.button.MaterialButton;
-import com.google.android.material.slider.RangeSlider;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.textfield.TextInputLayout;
 
 import java.io.DataOutputStream;
 import java.io.InputStream;
@@ -28,6 +32,12 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<String> notificationPermissionLauncher;
     private SharedPreferences sharedPrefs;
     private boolean startingService;
+    private boolean updatingFields;
+    private TextInputLayout inputMin;
+    private TextInputLayout inputMax;
+    private TextInputEditText etMin;
+    private TextInputEditText etMax;
+    private TextView tvSliderValue;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,28 +47,12 @@ public class MainActivity extends AppCompatActivity {
         sharedPrefs = ConfigStore.prefs(this);
         ConfigStore.ensureDefaultOff(this);
 
-        // 初始化步频配置 UI
-        RangeSlider rangeSlider = findViewById(R.id.range_slider);
-        TextView tvSliderValue = findViewById(R.id.tv_slider_value);
-        
-        float minVal = ConfigStore.clampCadence(sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN));
-        float maxVal = ConfigStore.clampCadence(sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX));
-        if (maxVal < minVal) {
-            float swap = minVal;
-            minVal = maxVal;
-            maxVal = swap;
-        }
-        rangeSlider.setValues(minVal, maxVal);
-        tvSliderValue.setText((int) minVal + " - " + (int) maxVal);
-
-        rangeSlider.addOnChangeListener((slider, value, fromUser) -> {
-            float min = slider.getValues().get(0);
-            float max = slider.getValues().get(1);
-            tvSliderValue.setText((int) min + " - " + (int) max);
-            if (!fromUser) return;
-            // commit，避免进程马上被杀掉时 apply 还没落盘。
-            ConfigStore.saveCadence(this, min, max);
-        });
+        inputMin = findViewById(R.id.input_min);
+        inputMax = findViewById(R.id.input_max);
+        etMin = findViewById(R.id.et_min);
+        etMax = findViewById(R.id.et_max);
+        tvSliderValue = findViewById(R.id.tv_slider_value);
+        bindCadenceInputs();
 
         // 注册现代的 ActivityResultCallback 处理悬浮窗授权回调
         overlayPermissionLauncher = registerForActivityResult(
@@ -83,7 +77,110 @@ public class MainActivity extends AppCompatActivity {
 
         // 绑定按钮事件
         MaterialButton btnStart = findViewById(R.id.btn_start);
-        btnStart.setOnClickListener(v -> checkOverlayPermissionAndStart());
+        btnStart.setOnClickListener(v -> {
+            if (!commitCadenceFromInputs()) {
+                Toast.makeText(this, "步频需要是大于 0 的数字", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            checkOverlayPermissionAndStart();
+        });
+    }
+
+    @Override
+    protected void onPause() {
+        commitCadenceFromInputs();
+        super.onPause();
+    }
+
+    private void bindCadenceInputs() {
+        float minVal = ConfigStore.sanitizeCadence(
+                sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN),
+                ConfigStore.DEFAULT_MIN);
+        float maxVal = ConfigStore.sanitizeCadence(
+                sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX),
+                ConfigStore.DEFAULT_MAX);
+        if (maxVal < minVal) {
+            float swap = minVal;
+            minVal = maxVal;
+            maxVal = swap;
+        }
+        setFieldText(etMin, minVal);
+        setFieldText(etMax, maxVal);
+        updateSummary(minVal, maxVal);
+
+        TextWatcher watcher = new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                if (updatingFields) return;
+                Float min = ConfigStore.parseCadence(textOf(etMin));
+                Float max = ConfigStore.parseCadence(textOf(etMax));
+                if (min != null && max != null) {
+                    updateSummary(Math.min(min, max), Math.max(min, max));
+                }
+            }
+        };
+        etMin.addTextChangedListener(watcher);
+        etMax.addTextChangedListener(watcher);
+        etMin.setOnFocusChangeListener((v, hasFocus) -> {
+            if (!hasFocus) commitCadenceFromInputs();
+        });
+        etMax.setOnFocusChangeListener((v, hasFocus) -> {
+            if (!hasFocus) commitCadenceFromInputs();
+        });
+        etMax.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                commitCadenceFromInputs();
+            }
+            return false;
+        });
+    }
+
+    private void setFieldText(TextInputEditText field, float value) {
+        updatingFields = true;
+        field.setText(formatCadence(value));
+        updatingFields = false;
+    }
+
+    private static String formatCadence(float value) {
+        if (value == (float) Math.rint(value)) {
+            return String.valueOf((long) value);
+        }
+        return Float.toString(value);
+    }
+
+    private static String textOf(TextInputEditText field) {
+        return field.getText() == null ? "" : field.getText().toString();
+    }
+
+    /** 两个输入都合法才落盘。空、非数字、0 和负数只标错，不改已保存的值，也不崩。 */
+    private boolean commitCadenceFromInputs() {
+        if (updatingFields || etMin == null || etMax == null) return false;
+        Float min = ConfigStore.parseCadence(textOf(etMin));
+        Float max = ConfigStore.parseCadence(textOf(etMax));
+        inputMin.setError(min == null ? "请输入大于 0 的数字" : null);
+        inputMax.setError(max == null ? "请输入大于 0 的数字" : null);
+        if (min == null || max == null) return false;
+        float low = Math.min(min, max);
+        float high = Math.max(min, max);
+        ConfigStore.saveCadence(this, low, high);
+        updateSummary(low, high);
+        if (!etMin.hasFocus() && !etMax.hasFocus() && (min > max)) {
+            setFieldText(etMin, low);
+            setFieldText(etMax, high);
+        }
+        return true;
+    }
+
+    private void updateSummary(float min, float max) {
+        tvSliderValue.setText(formatCadence(min) + " - " + formatCadence(max));
     }
 
     private void checkOverlayPermissionAndStart() {

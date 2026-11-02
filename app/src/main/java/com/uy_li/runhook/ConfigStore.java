@@ -19,8 +19,6 @@ public final class ConfigStore {
     public static final String KEY_MAX = "max_cadence";
     public static final float DEFAULT_MIN = 172f;
     public static final float DEFAULT_MAX = 182f;
-    public static final float CADENCE_MIN = 140f;
-    public static final float CADENCE_MAX = 220f;
     public static final String KEY_TOKEN = "control_token";
 
     /** 代码实际会 Hook 的包，和 res/values/arrays.xml 里的 xposedscope 保持一致。 */
@@ -70,16 +68,32 @@ public final class ConfigStore {
         ensureToken(context);
     }
 
-    /** 滑块读到越界或 NaN 时，RangeSlider.setValues 会直接把界面崩掉。 */
-    public static float clampCadence(float value) {
-        if (Float.isNaN(value) || value < CADENCE_MIN) return CADENCE_MIN;
-        if (value > CADENCE_MAX) return CADENCE_MAX;
-        return value;
+    /** 只拒绝 NaN、无穷、空值和小于等于 0。合法数字不再夹到 140–220。 */
+    public static boolean isValidCadence(float value) {
+        return !Float.isNaN(value) && !Float.isInfinite(value) && value > 0f;
     }
 
-    public static void saveCadence(Context context, float min, float max) {
-        min = clampCadence(min);
-        max = clampCadence(max);
+    public static float sanitizeCadence(float value, float fallback) {
+        if (isValidCadence(value)) return value;
+        if (isValidCadence(fallback)) return fallback;
+        return DEFAULT_MIN;
+    }
+
+    /** @return 解析成功且大于 0 时返回数值，空串、非数字、0 或负数返回 null。 */
+    public static Float parseCadence(String text) {
+        if (text == null) return null;
+        String trimmed = text.trim().replace(',', '.');
+        if (trimmed.isEmpty()) return null;
+        try {
+            float value = Float.parseFloat(trimmed);
+            return isValidCadence(value) ? value : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    public static boolean saveCadence(Context context, float min, float max) {
+        if (!isValidCadence(min) || !isValidCadence(max)) return false;
         if (max < min) {
             float swap = min;
             min = max;
@@ -90,6 +104,7 @@ public final class ConfigStore {
                 .putFloat(KEY_MAX, max)
                 .commit();
         makeReadable(context);
+        return true;
     }
 
     public static String ensureToken(Context context) {
@@ -104,6 +119,13 @@ public final class ConfigStore {
     }
 
     public static void setEnabled(Context context, boolean enabled, float min, float max) {
+        min = sanitizeCadence(min, DEFAULT_MIN);
+        max = sanitizeCadence(max, DEFAULT_MAX);
+        if (max < min) {
+            float swap = min;
+            min = max;
+            max = swap;
+        }
         prefs(context).edit()
                 .putBoolean(KEY_ENABLED, enabled)
                 .putFloat(KEY_MIN, min)

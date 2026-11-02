@@ -4,6 +4,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class StepAccumulatorTest {
@@ -73,10 +74,23 @@ public class StepAccumulatorTest {
     }
 
     @Test
-    public void cadenceClampRejectsNaNAndOutOfRange() {
-        assertEquals(ConfigStore.CADENCE_MIN, ConfigStore.clampCadence(Float.NaN), 0.001f);
-        assertEquals(ConfigStore.CADENCE_MIN, ConfigStore.clampCadence(10f), 0.001f);
-        assertEquals(ConfigStore.CADENCE_MAX, ConfigStore.clampCadence(400f), 0.001f);
-        assertEquals(180f, ConfigStore.clampCadence(180f), 0.001f);
+    public void cadenceKeepsAnyPositiveValueAndRejectsInvalid() {
+        assertEquals(10f, ConfigStore.sanitizeCadence(10f, 172f), 0.001f);
+        assertEquals(400f, ConfigStore.sanitizeCadence(400f, 172f), 0.001f);
+        assertEquals(180f, ConfigStore.sanitizeCadence(180f, 172f), 0.001f);
+        assertEquals(172f, ConfigStore.sanitizeCadence(Float.NaN, 172f), 0.001f);
+        assertEquals(172f, ConfigStore.sanitizeCadence(Float.POSITIVE_INFINITY, 172f), 0.001f);
+        assertEquals(172f, ConfigStore.sanitizeCadence(0f, 172f), 0.001f);
+        assertEquals(172f, ConfigStore.sanitizeCadence(-5f, 172f), 0.001f);
+        assertEquals(ConfigStore.DEFAULT_MIN, ConfigStore.sanitizeCadence(Float.NaN, Float.NaN), 0.001f);
+
+        assertNull(ConfigStore.parseCadence(null));
+        assertNull(ConfigStore.parseCadence(""));
+        assertNull(ConfigStore.parseCadence("  "));
+        assertNull(ConfigStore.parseCadence("abc"));
+        assertNull(ConfigStore.parseCadence("0"));
+        assertNull(ConfigStore.parseCadence("-2"));
+        assertEquals(50f, ConfigStore.parseCadence("50"), 0.001f);
+        assertEquals(175.5f, ConfigStore.parseCadence(" 175.5 "), 0.001f);
     }
 }
