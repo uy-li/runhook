@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -23,6 +26,10 @@
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
+        <!-- LSPosed 新版 XSharedPreferences：让 Hook 进程能读到引擎开关，且默认是关 -->
+        <meta-data
+            android:name="xposedsharedprefs"
+            android:value="true" />
 
         <!-- 引用资源文件中的数组作为作用域，解决 LSPosed 作用域无法自动推荐的 Bug -->
         <meta-data
@@ -41,7 +48,13 @@
 
         <service
             android:name=".FloatingService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="保持步频悬浮窗在自动锁屏后仍然显示" />
+        </service>
 
     </application>
 

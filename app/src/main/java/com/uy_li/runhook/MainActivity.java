@@ -1,7 +1,9 @@
 package com.uy_li.runhook;
 
+import android.Manifest;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -28,7 +30,8 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         
-        sharedPrefs = getSharedPreferences("JoyrunConfig", MODE_PRIVATE);
+        sharedPrefs = ConfigStore.prefs(this);
+        ConfigStore.ensureDefaultOff(this);
 
         // 初始化步频配置 UI
         RangeSlider rangeSlider = findViewById(R.id.range_slider);
@@ -150,8 +153,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startFloatingServiceAndFinish() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
+        }
         Intent intent = new Intent(this, FloatingService.class);
-        startService(intent);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
         Toast.makeText(this, "悬浮窗已开启", Toast.LENGTH_SHORT).show();
         // 启动完毕后调用 moveTaskToBack(true) 将程序退到后台而不是直接销毁，保留界面状态
         moveTaskToBack(true);
