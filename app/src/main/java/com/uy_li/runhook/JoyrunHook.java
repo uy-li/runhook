@@ -10,13 +10,16 @@ import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
+import android.location.Location;
+import android.location.LocationListener;
 import android.os.Build;
 import android.os.SystemClock;
 import android.widget.Toast;
 
-import java.io.File;
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -39,8 +42,18 @@ public class JoyrunHook implements IXposedHookLoadPackage {
 
     private static float minCadenceConfig = ConfigStore.DEFAULT_MIN;
     private static float maxCadenceConfig = ConfigStore.DEFAULT_MAX;
-    private static float currentCadence = 176f;
-    private static long waveStartMs = 0L;
+    private static boolean userEnabled;
+    private static boolean altitudeEnabled;
+    private static float altMinConfig = AltitudeCurve.DEFAULT_MIN;
+    private static float altMaxConfig = AltitudeCurve.DEFAULT_MAX;
+    private static final CadenceCurve cadenceCurve = new CadenceCurve(1L);
+    private static final AltitudeCurve altitudeCurve = new AltitudeCurve(1L);
+    private static boolean pendingCurve;
+    private static long pendingCurveSeed = 1L;
+    private static long pendingCurveStart;
+    private static boolean pendingAlt;
+    private static long pendingAltSeed = 1L;
+    private static long pendingAltStart;
 
     private static final Object STATE_LOCK = new Object();
     private static final StepAccumulator accumulator = new StepAccumulator();
@@ -57,6 +70,7 @@ public class JoyrunHook implements IXposedHookLoadPackage {
     private static final ThreadLocal<SensorEvent> activeEvent = new ThreadLocal<>();
 
     private static final Set<Class<?>> hookedListenerClasses = ConcurrentHashMap.newKeySet();
+    private static final Set<Class<?>> hookedLocationClasses = ConcurrentHashMap.newKeySet();
     private static final Map<SensorEventListener, SensorEventListener> wrappedListeners = new ConcurrentHashMap<>();
     private static final Map<Integer, Long> lastTimestamps = new ConcurrentHashMap<>();
 
@@ -107,19 +121,37 @@ public class JoyrunHook implements IXposedHookLoadPackage {
                             float max = intent.hasExtra("MAX_CADENCE")
                                     ? intent.getFloatExtra("MAX_CADENCE", maxCadenceConfig)
                                     : maxCadenceConfig;
+                            boolean altitudeSpecified = intent.hasExtra("ALT_ENABLED")
+                                    || intent.hasExtra("MIN_ALTITUDE")
+                                    || intent.hasExtra("MAX_ALTITUDE");
+                            boolean altitudeOn = intent.hasExtra("ALT_ENABLED")
+                                    ? intent.getBooleanExtra("ALT_ENABLED", altitudeEnabled)
+                                    : altitudeEnabled;
+                            float altMin = intent.hasExtra("MIN_ALTITUDE")
+                                    ? intent.getFloatExtra("MIN_ALTITUDE", altMinConfig)
+                                    : altMinConfig;
+                            float altMax = intent.hasExtra("MAX_ALTITUDE")
+                                    ? intent.getFloatExtra("MAX_ALTITUDE", altMaxConfig)
+                                    : altMaxConfig;
                             boolean quiet = intent.getBooleanExtra("QUIET", false);
 
                             boolean changed;
                             synchronized (STATE_LOCK) {
                                 lastExplicitToggleElapsed = SystemClock.elapsedRealtime();
-                                changed = applyEnabledLocked(state, min, max);
+                                changed = applyUserStateLocked(state, min, max, altitudeOn, altMin, altMax,
+                                        altitudeSpecified, true, System.currentTimeMillis());
                             }
                             if (changed && !state) {
                                 saveStepState(true);
                             }
                             if (changed && !quiet && !"android".equals(pkg)) {
                                 String statusMsg = state
-                                        ? ("已开启 (范围 " + (int) minCadenceConfig + "-" + (int) maxCadenceConfig + ")")
+                                        ? ("已开启 (步频 " + formatToastNumber(minCadenceConfig) + "-"
+                                        + formatToastNumber(maxCadenceConfig)
+                                        + (altitudeEnabled
+                                        ? ("，海拔 " + formatToastNumber(altMinConfig) + "-" + formatToastNumber(altMaxConfig))
+                                        : "")
+                                        + ")")
                                         : "已关闭";
                                 // system_server 里弹 Toast 可能直接把系统进程打崩，只记日志。
                                 Toast.makeText(context, "万能接口拦截(一加专版) " + statusMsg, Toast.LENGTH_SHORT).show();
@@ -166,6 +198,8 @@ public class JoyrunHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("JoyrunHook: 建立万能接口拦截器失败: " + t.getMessage());
         }
+
+        hookLocationAltitude(lpparam.classLoader);
     }
 
     private void hookSensorManager(Class<?> managerClass) {
@@ -285,11 +319,18 @@ public class JoyrunHook implements IXposedHookLoadPackage {
             boolean enabled = xPrefs.getBoolean(ConfigStore.KEY_ENABLED, false);
             float min = xPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN);
             float max = xPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX);
+            boolean altitudeKnown = all.containsKey(ConfigStore.KEY_ALT_ENABLED)
+                    || all.containsKey(ConfigStore.KEY_ALT_MIN)
+                    || all.containsKey(ConfigStore.KEY_ALT_MAX);
+            boolean altitudeOn = xPrefs.getBoolean(ConfigStore.KEY_ALT_ENABLED, false);
+            float altMin = xPrefs.getFloat(ConfigStore.KEY_ALT_MIN, AltitudeCurve.DEFAULT_MIN);
+            float altMax = xPrefs.getFloat(ConfigStore.KEY_ALT_MAX, AltitudeCurve.DEFAULT_MAX);
             boolean turnedOff;
             synchronized (STATE_LOCK) {
-                boolean was = isModifyCadence;
-                applyEnabledLocked(enabled, min, max);
-                turnedOff = was && !isModifyCadence;
+                boolean was = userEnabled;
+                applyUserStateLocked(enabled, min, max, altitudeOn, altMin, altMax,
+                        altitudeKnown, false, System.currentTimeMillis());
+                turnedOff = was && !userEnabled;
             }
             if (turnedOff) saveStepState(true);
         } catch (Throwable t) {
@@ -309,8 +350,13 @@ public class JoyrunHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 调用方需要持有 STATE_LOCK。返回值表示开关是否变化。 */
-    private static boolean applyEnabledLocked(boolean enabled, float min, float max) {
+    /**
+     * 调用方需要持有 STATE_LOCK。返回值表示用户想要的引擎开关是否变化。
+     * explicit 为 false 表示进程刚起来在读配置：这时如果配置是关，直接停，不再补一段冷却步数。
+     */
+    private static boolean applyUserStateLocked(boolean enabled, float min, float max,
+                                                boolean altitudeOn, float altMin, float altMax,
+                                                boolean altitudeSpecified, boolean explicit, long nowMs) {
         min = ConfigStore.sanitizeCadence(min, minCadenceConfig);
         max = ConfigStore.sanitizeCadence(max, maxCadenceConfig);
         if (max < min) {
@@ -320,26 +366,88 @@ public class JoyrunHook implements IXposedHookLoadPackage {
         }
         minCadenceConfig = min;
         maxCadenceConfig = max;
-        boolean changed = enabled != isModifyCadence;
-        if (enabled && !isModifyCadence) {
-            currentCadence = pickCadenceLocked();
-            long now = System.currentTimeMillis();
-            // 关掉的那段时间不能补进步数里。
-            accumulator.lastUpdateMs = now;
-            waveStartMs = now;
-            XposedBridge.log("JoyrunHook: 引擎开启，步频 " + currentCadence);
-        } else if (enabled && (currentCadence < minCadenceConfig || currentCadence > maxCadenceConfig)) {
-            currentCadence = pickCadenceLocked();
-        } else if (!enabled && isModifyCadence) {
-            XposedBridge.log("JoyrunHook: 引擎关闭，停止累加");
+        cadenceCurve.setRange(min, max);
+        if (altitudeSpecified) {
+            applyAltitudeLocked(altitudeOn, altMin, altMax, nowMs);
         }
-        isModifyCadence = enabled;
-        return changed;
+
+        boolean was = userEnabled;
+        if (enabled) {
+            CadenceCurve.Mode mode = cadenceCurve.modeAt(nowMs);
+            if (mode == CadenceCurve.Mode.RUNNING) {
+                pendingCurve = false;
+            } else if (!explicit && pendingCurve && pendingCurveStart > 0L) {
+                // 进程重启后续上原来的曲线，但 lastUpdateMs 不恢复，死亡空档不计步。
+                cadenceCurve.restoreRunning(pendingCurveSeed, min, max, pendingCurveStart);
+                pendingCurve = false;
+                XposedBridge.log("JoyrunHook: 恢复步频曲线");
+            } else {
+                pendingCurve = false;
+                cadenceCurve.reseed(freshSeed());
+                cadenceCurve.setRange(min, max);
+                cadenceCurve.start(nowMs);
+                // 关掉的那段时间不能补进步数里。
+                accumulator.lastUpdateMs = nowMs;
+                XposedBridge.log("JoyrunHook: 引擎开启，步频区间 " + min + "-" + max);
+            }
+            userEnabled = true;
+        } else {
+            pendingCurve = false;
+            CadenceCurve.Mode mode = cadenceCurve.modeAt(nowMs);
+            if (explicit && mode == CadenceCurve.Mode.RUNNING) {
+                cadenceCurve.beginCooldown(nowMs);
+                XposedBridge.log("JoyrunHook: 引擎关闭，步频冷却后停止");
+            } else if (!explicit && cadenceCurve.isStarted()) {
+                cadenceCurve.stopImmediate();
+                XposedBridge.log("JoyrunHook: 配置为关闭，停止累加");
+            }
+            userEnabled = false;
+        }
+        isModifyCadence = userEnabled || cadenceCurve.isActive(nowMs);
+        return was != enabled;
     }
 
-    private static float pickCadenceLocked() {
-        float span = maxCadenceConfig - minCadenceConfig;
-        return minCadenceConfig + (span > 0f ? (float) (Math.random() * span) : 0f);
+    /** 调用方需要持有 STATE_LOCK。 */
+    private static void applyAltitudeLocked(boolean enabled, float min, float max, long nowMs) {
+        float[] range = new float[2];
+        if (!AltitudeCurve.normalizeRange(min, max, range)) {
+            if (!AltitudeCurve.normalizeRange(altMinConfig, altMaxConfig, range)) {
+                range[0] = AltitudeCurve.DEFAULT_MIN;
+                range[1] = AltitudeCurve.DEFAULT_MAX;
+            }
+        }
+        altMinConfig = range[0];
+        altMaxConfig = range[1];
+        altitudeCurve.setRange(range[0], range[1]);
+        if (!enabled) {
+            altitudeEnabled = false;
+            altitudeCurve.stop();
+            pendingAlt = false;
+            return;
+        }
+        altitudeEnabled = true;
+        if (altitudeCurve.isStarted()) {
+            pendingAlt = false;
+            return;
+        }
+        if (pendingAlt && pendingAltStart > 0L) {
+            altitudeCurve.restore(pendingAltSeed, range[0], range[1], pendingAltStart);
+            pendingAlt = false;
+            return;
+        }
+        altitudeCurve.reseed(freshSeed());
+        altitudeCurve.setRange(range[0], range[1]);
+        altitudeCurve.start(nowMs);
+    }
+
+    private static long freshSeed() {
+        long seed = new Random().nextLong();
+        return seed == 0L ? 0x5DEECE66DL : seed;
+    }
+
+    private static String formatToastNumber(float value) {
+        if (value == (float) Math.rint(value)) return String.valueOf((long) value);
+        return Float.toString(value);
     }
 
     private static boolean acceptControlToken(Intent intent) {
@@ -374,6 +482,17 @@ public class JoyrunHook implements IXposedHookLoadPackage {
                 SharedPreferences sp = appContext.getSharedPreferences(STEP_PREFS, Context.MODE_PRIVATE);
                 accumulator.boost = Math.max(0f, sp.getFloat("boost", 0f));
                 accumulator.lastReal = sp.getFloat("last_real", -1f);
+                if (sp.getBoolean("curve_running", false)) {
+                    pendingCurve = true;
+                    pendingCurveSeed = sp.getLong("curve_seed", 1L);
+                    pendingCurveStart = sp.getLong("curve_start", 0L);
+                }
+                long altStart = sp.getLong("alt_start", 0L);
+                if (altStart > 0L) {
+                    pendingAlt = true;
+                    pendingAltSeed = sp.getLong("alt_seed", 1L);
+                    pendingAltStart = altStart;
+                }
             } catch (Throwable t) {
                 XposedBridge.log("JoyrunHook: 读取步数偏移失败: " + t.getMessage());
             }
@@ -385,18 +504,33 @@ public class JoyrunHook implements IXposedHookLoadPackage {
         if (ctx == null) return;
         float boost;
         float lastReal;
+        boolean curveRunning;
+        long curveSeed;
+        long curveStart;
+        long altSeed;
+        long altStart;
         synchronized (STATE_LOCK) {
             long now = SystemClock.elapsedRealtime();
             if (!force && now - lastStepSaveElapsed < 5000) return;
             lastStepSaveElapsed = now;
             boost = accumulator.boost;
             lastReal = accumulator.lastReal;
+            curveRunning = cadenceCurve.modeAt(System.currentTimeMillis()) == CadenceCurve.Mode.RUNNING;
+            curveSeed = cadenceCurve.seed();
+            curveStart = curveRunning ? cadenceCurve.sessionStartMs() : 0L;
+            altSeed = altitudeCurve.seed();
+            altStart = altitudeCurve.isStarted() ? altitudeCurve.sessionStartMs() : 0L;
         }
         try {
             SharedPreferences.Editor editor = ctx.getSharedPreferences(STEP_PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putFloat("boost", boost)
-                    .putFloat("last_real", lastReal);
+                    .putFloat("last_real", lastReal)
+                    .putBoolean("curve_running", curveRunning)
+                    .putLong("curve_seed", curveSeed)
+                    .putLong("curve_start", curveStart)
+                    .putLong("alt_seed", altSeed)
+                    .putLong("alt_start", altStart);
             // 传感器线程上每次 commit 都会卡磁盘。只有关闭或硬件复位才强制刷盘。
             if (force) editor.commit();
             else editor.apply();
@@ -419,26 +553,29 @@ public class JoyrunHook implements IXposedHookLoadPackage {
                 modifyStepCounter(event);
                 return;
             }
+            if (type == Sensor.TYPE_PRESSURE) {
+                modifyPressure(event);
+                return;
+            }
 
             boolean enabled;
-            float cadence;
-            long waveStart;
+            float yWave = 0f;
+            float zWave = 0f;
             synchronized (STATE_LOCK) {
-                enabled = isModifyCadence;
-                cadence = currentCadence;
-                waveStart = waveStartMs;
+                enabled = userEnabled || cadenceCurve.isActive(System.currentTimeMillis());
+                isModifyCadence = enabled;
+                if (enabled && type == Sensor.TYPE_ACCELEROMETER && event.values.length >= 3 && spoofAccelerometer()) {
+                    long sampleMs = eventWallTimeMs(event);
+                    yWave = cadenceCurve.waveY(sampleMs);
+                    zWave = cadenceCurve.waveZ(sampleMs);
+                } else if (type == Sensor.TYPE_ACCELEROMETER) {
+                    enabled = false;
+                }
             }
             if (!enabled) return;
 
             if (type == Sensor.TYPE_ACCELEROMETER && event.values.length >= 3) {
                 // 系统计步服务自己的加速度融合一旦被改掉，可能把已保存的步数记录判定为异常并清掉。
-                if (!spoofAccelerometer()) return;
-                if (waveStart == 0L) waveStart = System.currentTimeMillis();
-                float elapsedSecs = (System.currentTimeMillis() - waveStart) / 1000f;
-                float freq = cadence / 60.0f;
-
-                float zWave = 9.81f + (float) (Math.sin(elapsedSecs * Math.PI * 2 * freq) * 3.5f);
-                float yWave = (float) (Math.cos(elapsedSecs * Math.PI * 2 * freq) * 1.5f);
                 float jitterY = (float) (Math.random() * 0.4f - 0.2f);
                 float jitterZ = (float) (Math.random() * 0.4f - 0.2f);
 
@@ -477,6 +614,129 @@ public class JoyrunHook implements IXposedHookLoadPackage {
         }
     }
 
+    private static void modifyPressure(SensorEvent event) {
+        if (event.values.length < 1) return;
+        Double altitude = spoofedAltitudeOrNull();
+        if (altitude == null) return;
+        event.values[0] = AltitudeCurve.pressureHpa(altitude.floatValue());
+        keepTimestampMonotonic(event);
+    }
+
+    /**
+     * 灭屏批量回调的 timestamp 是采样时刻，墙钟却挤在一起。
+     * 相位按采样时刻取，步数仍按墙钟积分，这样波形连续，也不会把一批事件算成同一步。
+     */
+    private static long eventWallTimeMs(SensorEvent event) {
+        long wall = System.currentTimeMillis();
+        long elapsed = SystemClock.elapsedRealtimeNanos();
+        long ts = event.timestamp;
+        if (ts <= 0L || elapsed <= 0L) return wall;
+        long delta = elapsed - ts;
+        long maxNs = (long) StepAccumulator.MAX_GAP_SEC * 1_000_000_000L;
+        if (delta < -2_000_000_000L || delta > maxNs) return wall;
+        return wall - delta / 1_000_000L;
+    }
+
+    private static Double spoofedAltitudeOrNull() {
+        synchronized (STATE_LOCK) {
+            // system_server 里改气压会变成全机海拔。健康应用在自己的进程里读。
+            if ("android".equals(currentPackage)) return null;
+            if (!AltitudeCurve.shouldSpoof(userEnabled, altitudeEnabled)) return null;
+            long now = System.currentTimeMillis();
+            if (!altitudeCurve.isStarted()) {
+                altitudeCurve.reseed(freshSeed());
+                altitudeCurve.setRange(altMinConfig, altMaxConfig);
+                altitudeCurve.start(now);
+            }
+            return altitudeCurve.altitudeAt(now);
+        }
+    }
+
+    private void hookLocationAltitude(ClassLoader loader) {
+        if ("android".equals(currentPackage)) return;
+        try {
+            Class<?> locationClass = XposedHelpers.findClass("android.location.Location", loader);
+            XposedHelpers.findAndHookMethod(locationClass, "getAltitude", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    Double altitude = spoofedAltitudeOrNull();
+                    if (altitude != null) param.setResult(altitude);
+                }
+            });
+            XposedHelpers.findAndHookMethod(locationClass, "hasAltitude", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    if (spoofedAltitudeOrNull() != null) param.setResult(true);
+                }
+            });
+        } catch (Throwable t) {
+            XposedBridge.log("JoyrunHook: Location 海拔读取 Hook 失败: " + t.getMessage());
+        }
+
+        try {
+            Class<?> manager = XposedHelpers.findClass("android.location.LocationManager", loader);
+            for (Method method : manager.getDeclaredMethods()) {
+                String name = method.getName();
+                if (!"requestLocationUpdates".equals(name) && !"requestSingleUpdate".equals(name)) continue;
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (param.args == null) return;
+                        for (Object arg : param.args) {
+                            if (arg instanceof LocationListener) {
+                                ensureLocationListenerHooked((LocationListener) arg);
+                            }
+                        }
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("JoyrunHook: LocationManager Hook 失败: " + t.getMessage());
+        }
+    }
+
+    private void ensureLocationListenerHooked(LocationListener listener) {
+        Class<?> type = listener.getClass();
+        if (!hookedLocationClasses.add(type)) return;
+        boolean hooked = false;
+        try {
+            XposedHelpers.findAndHookMethod(type, "onLocationChanged", Location.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof Location) {
+                        stampLocation((Location) param.args[0]);
+                    }
+                }
+            });
+            hooked = true;
+        } catch (Throwable ignored) {
+        }
+        try {
+            XposedHelpers.findAndHookMethod(type, "onLocationChanged", List.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (param.args == null || param.args.length == 0 || !(param.args[0] instanceof List)) return;
+                    for (Object item : (List<?>) param.args[0]) {
+                        if (item instanceof Location) stampLocation((Location) item);
+                    }
+                }
+            });
+            hooked = true;
+        } catch (Throwable ignored) {
+        }
+        if (!hooked) hookedLocationClasses.remove(type);
+    }
+
+    private static void stampLocation(Location location) {
+        if (location == null) return;
+        Double altitude = spoofedAltitudeOrNull();
+        if (altitude == null) return;
+        try {
+            location.setAltitude(altitude);
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static boolean spoofAccelerometer() {
         // system_server 里改加速度会影响系统自己的计步融合，有机会把已经落盘的步数记录判成异常。
         // 健康 App 进程里仍然模拟加速度，否则只认波形的应用不会涨步数。
@@ -494,12 +754,21 @@ public class JoyrunHook implements IXposedHookLoadPackage {
         boolean reset;
         boolean hold;
         float reported;
+        boolean finished;
         synchronized (STATE_LOCK) {
+            boolean activeNow = userEnabled || cadenceCurve.isActive(now);
             // 关着，并且没有需要托住的历史偏移：原样放行，不做任何改写。
-            if (!isModifyCadence && accumulator.boost <= 0f) return;
-            reset = accumulator.advance(real, now, isModifyCadence, currentCadence / 60f);
+            if (!activeNow && accumulator.boost <= 0f) return;
+            double steps = cadenceCurve.creditedSteps(accumulator.lastUpdateMs, now, StepAccumulator.MAX_GAP_SEC);
+            boolean count = accumulator.lastUpdateMs > 0L && cadenceCurve.isActive(accumulator.lastUpdateMs);
+            reset = accumulator.advanceIntegrated(real, now, count, steps);
             hold = accumulator.shouldRewrite();
             reported = accumulator.reported(real);
+            finished = isModifyCadence && !activeNow;
+            isModifyCadence = activeNow;
+        }
+        if (finished) {
+            saveStepState(true);
         }
         if (reset) {
             saveStepState(true);

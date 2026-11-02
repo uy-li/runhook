@@ -21,6 +21,7 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -40,6 +41,12 @@ public class MainActivity extends AppCompatActivity {
     private TextInputEditText etMin;
     private TextInputEditText etMax;
     private TextView tvSliderValue;
+    private TextInputLayout inputAltMin;
+    private TextInputLayout inputAltMax;
+    private TextInputEditText etAltMin;
+    private TextInputEditText etAltMax;
+    private TextView tvAltValue;
+    private SwitchMaterial switchAltitude;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,7 +61,14 @@ public class MainActivity extends AppCompatActivity {
         etMin = findViewById(R.id.et_min);
         etMax = findViewById(R.id.et_max);
         tvSliderValue = findViewById(R.id.tv_slider_value);
+        inputAltMin = findViewById(R.id.input_alt_min);
+        inputAltMax = findViewById(R.id.input_alt_max);
+        etAltMin = findViewById(R.id.et_alt_min);
+        etAltMax = findViewById(R.id.et_alt_max);
+        tvAltValue = findViewById(R.id.tv_alt_value);
+        switchAltitude = findViewById(R.id.switch_altitude);
         bindCadenceInputs();
+        bindAltitudeInputs();
 
         // 注册现代的 ActivityResultCallback 处理悬浮窗授权回调
         overlayPermissionLauncher = registerForActivityResult(
@@ -89,8 +103,14 @@ public class MainActivity extends AppCompatActivity {
 
         MaterialButton btnStart = findViewById(R.id.btn_start);
         btnStart.setOnClickListener(v -> {
-            if (!commitCadenceFromInputs()) {
-                Toast.makeText(this, "步频需要是大于 0 的数字", Toast.LENGTH_SHORT).show();
+            boolean cadenceOk = commitCadenceFromInputs();
+            boolean altitudeOk = commitAltitudeFromInputs();
+            if (!cadenceOk) {
+                Toast.makeText(this, R.string.cadence_invalid_toast, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (!altitudeOk) {
+                Toast.makeText(this, R.string.altitude_invalid_toast, Toast.LENGTH_SHORT).show();
                 return;
             }
             checkOverlayPermissionAndStart();
@@ -100,6 +120,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         commitCadenceFromInputs();
+        commitAltitudeFromInputs();
         super.onPause();
     }
 
@@ -176,8 +197,8 @@ public class MainActivity extends AppCompatActivity {
         if (updatingFields || etMin == null || etMax == null) return false;
         Float min = ConfigStore.parseCadence(textOf(etMin));
         Float max = ConfigStore.parseCadence(textOf(etMax));
-        inputMin.setError(min == null ? "请输入大于 0 的数字" : null);
-        inputMax.setError(max == null ? "请输入大于 0 的数字" : null);
+        inputMin.setError(min == null ? getString(R.string.cadence_invalid) : null);
+        inputMax.setError(max == null ? getString(R.string.cadence_invalid) : null);
         if (min == null || max == null) return false;
         float low = Math.min(min, max);
         float high = Math.max(min, max);
@@ -192,6 +213,102 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateSummary(float min, float max) {
         tvSliderValue.setText(formatCadence(min) + " - " + formatCadence(max));
+    }
+
+    private void bindAltitudeInputs() {
+        float[] range = readStoredAltitude();
+        updatingFields = true;
+        switchAltitude.setChecked(sharedPrefs.getBoolean(ConfigStore.KEY_ALT_ENABLED, false));
+        updatingFields = false;
+        setFieldText(etAltMin, range[0]);
+        setFieldText(etAltMax, range[1]);
+        updateAltitudeSummary(range[0], range[1]);
+
+        TextWatcher watcher = new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                if (updatingFields) return;
+                Float min = ConfigStore.parseAltitude(textOf(etAltMin));
+                Float max = ConfigStore.parseAltitude(textOf(etAltMax));
+                if (min != null && max != null) {
+                    updateAltitudeSummary(Math.min(min, max), Math.max(min, max));
+                }
+            }
+        };
+        etAltMin.addTextChangedListener(watcher);
+        etAltMax.addTextChangedListener(watcher);
+        etAltMin.setOnFocusChangeListener((v, hasFocus) -> {
+            if (!hasFocus) commitAltitudeFromInputs();
+        });
+        etAltMax.setOnFocusChangeListener((v, hasFocus) -> {
+            if (!hasFocus) commitAltitudeFromInputs();
+        });
+        etAltMax.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                commitAltitudeFromInputs();
+            }
+            return false;
+        });
+        switchAltitude.setOnCheckedChangeListener((button, checked) -> {
+            if (updatingFields) return;
+            if (!commitAltitudeFromInputs()) {
+                updatingFields = true;
+                button.setChecked(false);
+                updatingFields = false;
+                Toast.makeText(this, R.string.altitude_invalid_toast, Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private float[] readStoredAltitude() {
+        float min = sharedPrefs.getFloat(ConfigStore.KEY_ALT_MIN, AltitudeCurve.DEFAULT_MIN);
+        float max = sharedPrefs.getFloat(ConfigStore.KEY_ALT_MAX, AltitudeCurve.DEFAULT_MAX);
+        float[] range = new float[2];
+        if (!AltitudeCurve.normalizeRange(min, max, range)) {
+            range[0] = AltitudeCurve.DEFAULT_MIN;
+            range[1] = AltitudeCurve.DEFAULT_MAX;
+        }
+        return range;
+    }
+
+    private void updateAltitudeSummary(float min, float max) {
+        tvAltValue.setText(formatCadence(min) + " - " + formatCadence(max));
+    }
+
+    /** 两个输入都合法才落盘。越界或空值只标错，不改已保存的海拔。颠倒的区间在失焦后对调。 */
+    private boolean commitAltitudeFromInputs() {
+        if (updatingFields || etAltMin == null || etAltMax == null || switchAltitude == null) return false;
+        Float min = ConfigStore.parseAltitude(textOf(etAltMin));
+        Float max = ConfigStore.parseAltitude(textOf(etAltMax));
+        inputAltMin.setError(min == null ? getString(R.string.altitude_invalid) : null);
+        inputAltMax.setError(max == null ? getString(R.string.altitude_invalid) : null);
+        if (min == null || max == null) {
+            // 输入不合法时仍允许关掉随机海拔，并沿用上次保存的区间。
+            if (!switchAltitude.isChecked()) {
+                float[] stored = readStoredAltitude();
+                ConfigStore.saveAltitude(this, false, stored[0], stored[1]);
+                updateAltitudeSummary(stored[0], stored[1]);
+                return true;
+            }
+            return false;
+        }
+        float low = Math.min(min, max);
+        float high = Math.max(min, max);
+        ConfigStore.saveAltitude(this, switchAltitude.isChecked(), low, high);
+        updateAltitudeSummary(low, high);
+        if (!etAltMin.hasFocus() && !etAltMax.hasFocus() && min > max) {
+            setFieldText(etAltMin, low);
+            setFieldText(etAltMax, high);
+        }
+        return true;
     }
 
     private void openGithub() {
