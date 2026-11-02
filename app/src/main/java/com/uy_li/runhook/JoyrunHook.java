@@ -53,6 +53,8 @@ public class JoyrunHook implements IXposedHookLoadPackage {
     private static boolean reloadingPrefs;
     private static long lastPrefReloadElapsed;
     private static long lastExplicitToggleElapsed = -1L;
+    private static volatile String controlToken = "";
+    private static final ThreadLocal<SensorEvent> activeEvent = new ThreadLocal<>();
 
     private static final Set<Class<?>> hookedListenerClasses = ConcurrentHashMap.newKeySet();
     private static final Map<SensorEventListener, SensorEventListener> wrappedListeners = new ConcurrentHashMap<>();
@@ -96,6 +98,7 @@ public class JoyrunHook implements IXposedHookLoadPackage {
                         public void onReceive(Context context, Intent intent) {
                             if (intent == null || !ACTION_TOGGLE.equals(intent.getAction())) return;
                             if (!intent.hasExtra("STATE")) return;
+                            if (!acceptControlToken(intent)) return;
 
                             boolean state = intent.getBooleanExtra("STATE", false);
                             float min = intent.hasExtra("MIN_CADENCE")
@@ -114,12 +117,15 @@ public class JoyrunHook implements IXposedHookLoadPackage {
                             if (changed && !state) {
                                 saveStepState(true);
                             }
-                            if (changed && !quiet) {
+                            if (changed && !quiet && !"android".equals(pkg)) {
                                 String statusMsg = state
                                         ? ("已开启 (范围 " + (int) minCadenceConfig + "-" + (int) maxCadenceConfig + ")")
                                         : "已关闭";
+                                // system_server 里弹 Toast 可能直接把系统进程打崩，只记日志。
                                 Toast.makeText(context, "万能接口拦截(一加专版) " + statusMsg, Toast.LENGTH_SHORT).show();
                                 XposedBridge.log("JoyrunHook: " + pkg + " 收到广播，万能接口拦截 " + statusMsg);
+                            } else if (changed) {
+                                XposedBridge.log("JoyrunHook: " + pkg + " 开关变为 " + state);
                             }
                         }
                     };
@@ -267,6 +273,12 @@ public class JoyrunHook implements IXposedHookLoadPackage {
             }
             xPrefs.reload();
             Map<String, ?> all = xPrefs.getAll();
+            if (all != null) {
+                Object tokenRaw = all.get(ConfigStore.KEY_TOKEN);
+                if (tokenRaw instanceof String && !((String) tokenRaw).isEmpty()) {
+                    controlToken = (String) tokenRaw;
+                }
+            }
             // 没有这份键就保持内存状态。进程刚起来时内存是关，所以不会默认注入。
             if (all == null || !all.containsKey(ConfigStore.KEY_ENABLED)) return;
 
@@ -299,24 +311,59 @@ public class JoyrunHook implements IXposedHookLoadPackage {
 
     /** 调用方需要持有 STATE_LOCK。返回值表示开关是否变化。 */
     private static boolean applyEnabledLocked(boolean enabled, float min, float max) {
-        if (min > 0f && max >= min) {
-            minCadenceConfig = min;
-            maxCadenceConfig = max;
+        min = ConfigStore.clampCadence(min);
+        max = ConfigStore.clampCadence(max);
+        if (max < min) {
+            float swap = min;
+            min = max;
+            max = swap;
         }
+        minCadenceConfig = min;
+        maxCadenceConfig = max;
         boolean changed = enabled != isModifyCadence;
         if (enabled && !isModifyCadence) {
-            float span = maxCadenceConfig - minCadenceConfig;
-            currentCadence = minCadenceConfig + (span > 0f ? (float) (Math.random() * span) : 0f);
+            currentCadence = pickCadenceLocked();
             long now = System.currentTimeMillis();
             // 关掉的那段时间不能补进步数里。
             accumulator.lastUpdateMs = now;
             waveStartMs = now;
             XposedBridge.log("JoyrunHook: 引擎开启，步频 " + currentCadence);
+        } else if (enabled && (currentCadence < minCadenceConfig || currentCadence > maxCadenceConfig)) {
+            currentCadence = pickCadenceLocked();
         } else if (!enabled && isModifyCadence) {
             XposedBridge.log("JoyrunHook: 引擎关闭，停止累加");
         }
         isModifyCadence = enabled;
         return changed;
+    }
+
+    private static float pickCadenceLocked() {
+        float span = maxCadenceConfig - minCadenceConfig;
+        return minCadenceConfig + (span > 0f ? (float) (Math.random() * span) : 0f);
+    }
+
+    private static boolean acceptControlToken(Intent intent) {
+        ensureControlTokenLoaded();
+        String expected = controlToken;
+        if (expected == null || expected.isEmpty()) return true;
+        return expected.equals(intent.getStringExtra("TOKEN"));
+    }
+
+    private static void ensureControlTokenLoaded() {
+        if (controlToken != null && !controlToken.isEmpty()) return;
+        try {
+            if (xPrefs == null) {
+                xPrefs = new XSharedPreferences(MODULE_PACKAGE, ConfigStore.PREF_NAME);
+                tryRegisterPrefListener();
+            }
+            xPrefs.reload();
+            String token = xPrefs.getString(ConfigStore.KEY_TOKEN, "");
+            if (token != null && !token.isEmpty()) {
+                controlToken = token;
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("JoyrunHook: 读取控制口令失败: " + t.getMessage());
+        }
     }
 
     private static void loadStepState() {
@@ -346,19 +393,25 @@ public class JoyrunHook implements IXposedHookLoadPackage {
             lastReal = accumulator.lastReal;
         }
         try {
-            ctx.getSharedPreferences(STEP_PREFS, Context.MODE_PRIVATE)
+            SharedPreferences.Editor editor = ctx.getSharedPreferences(STEP_PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putFloat("boost", boost)
-                    .putFloat("last_real", lastReal)
-                    .commit();
+                    .putFloat("last_real", lastReal);
+            // 传感器线程上每次 commit 都会卡磁盘。只有关闭或硬件复位才强制刷盘。
+            if (force) editor.commit();
+            else editor.apply();
         } catch (Throwable t) {
             XposedBridge.log("JoyrunHook: 保存步数偏移失败: " + t.getMessage());
         }
     }
 
     private static void modifyEvent(SensorEvent event) {
+        if (event == null || event.sensor == null || event.values == null) return;
+        // 子类 Hook 再调用 super 时，同一次回调会进来两遍，步数会被加两次。
+        if (activeEvent.get() == event) return;
+        SensorEvent previous = activeEvent.get();
+        activeEvent.set(event);
         try {
-            if (event == null || event.sensor == null || event.values == null) return;
             reloadConfigFromPrefs(false);
 
             int type = event.sensor.getType();
@@ -399,6 +452,9 @@ public class JoyrunHook implements IXposedHookLoadPackage {
             }
         } catch (Throwable t) {
             XposedBridge.log("JoyrunHook: modify failed: " + t.getMessage());
+        } finally {
+            if (previous == null) activeEvent.remove();
+            else activeEvent.set(previous);
         }
     }
 
@@ -409,12 +465,16 @@ public class JoyrunHook implements IXposedHookLoadPackage {
     private static void keepTimestampMonotonic(SensorEvent event) {
         int type = event.sensor.getType();
         long ts = event.timestamp;
-        Long prev = lastTimestamps.get(type);
-        if (prev != null && ts <= prev) {
-            ts = prev + 1_000_000L;
-            event.timestamp = ts;
+        synchronized (lastTimestamps) {
+            Long prev = lastTimestamps.get(type);
+            if (prev != null && ts <= prev) {
+                ts = prev + 1_000_000L;
+                // 接近 Long.MAX_VALUE 时再加会溢出成负数，直接保持原值。
+                if (ts < 0) return;
+                event.timestamp = ts;
+            }
+            lastTimestamps.put(type, ts);
         }
-        lastTimestamps.put(type, ts);
     }
 
     private static boolean spoofAccelerometer() {
