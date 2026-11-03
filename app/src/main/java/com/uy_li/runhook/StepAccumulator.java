@@ -15,6 +15,25 @@ public final class StepAccumulator {
     long lastUpdateMs;
 
     public boolean advance(float real, long nowMs, boolean enabled, float stepsPerSec) {
+        double integrated = 0d;
+        if (!Float.isNaN(real) && !Float.isInfinite(real)
+                && enabled && lastUpdateMs > 0L && nowMs > lastUpdateMs && stepsPerSec > 0f) {
+            float dt = (nowMs - lastUpdateMs) / 1000f;
+            if (dt > MAX_GAP_SEC) {
+                dt = MAX_GAP_SEC;
+            }
+            if (dt > 0f) {
+                integrated = (double) dt * stepsPerSec;
+            }
+        }
+        return advanceIntegrated(real, nowMs, enabled, integrated);
+    }
+
+    /**
+     * 加上已经按真实步频积分好的步数。关闭时忽略步数，只跟踪硬件读数，避免关着引擎还在涨。
+     * 调用方负责用 {@link #MAX_GAP_SEC} 截断空档；这里不再乘一次固定步频。
+     */
+    public boolean advanceIntegrated(float real, long nowMs, boolean enabled, double integratedSteps) {
         if (Float.isNaN(real) || Float.isInfinite(real)) {
             return false;
         }
@@ -26,14 +45,11 @@ public final class StepAccumulator {
             reset = true;
         }
 
-        if (!reset && enabled && lastUpdateMs > 0L && nowMs > lastUpdateMs && stepsPerSec > 0f) {
-            float dt = (nowMs - lastUpdateMs) / 1000f;
-            if (dt > MAX_GAP_SEC) {
-                dt = MAX_GAP_SEC;
-            }
-            if (dt > 0f) {
-                boost += dt * stepsPerSec;
-            }
+        if (!reset && enabled && lastUpdateMs > 0L && nowMs > lastUpdateMs
+                && integratedSteps > 0d
+                && !Double.isNaN(integratedSteps)
+                && !Double.isInfinite(integratedSteps)) {
+            boost += (float) integratedSteps;
         }
 
         lastReal = real;

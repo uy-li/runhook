@@ -23,6 +23,9 @@ public final class ConfigStore {
     public static final float DEFAULT_MAX = 182f;
     public static final String KEY_TOKEN = "control_token";
     public static final String KEY_DARK_THEME = "dark_theme";
+    public static final String KEY_ALT_ENABLED = "altitude_enabled";
+    public static final String KEY_ALT_MIN = "min_altitude";
+    public static final String KEY_ALT_MAX = "max_altitude";
 
     /** 代码实际会 Hook 的包，和 res/values/arrays.xml 里的 xposedscope 保持一致。 */
     public static final String[] TARGET_PACKAGES = {
@@ -102,6 +105,33 @@ public final class ConfigStore {
         if (isValidCadence(value)) return value;
         if (isValidCadence(fallback)) return fallback;
         return DEFAULT_MIN;
+    }
+
+    /**
+     * 海拔允许负数，但必须落在 -500 到 9000 米。空串、非数字、NaN 和越界返回 null。
+     */
+    public static Float parseAltitude(String text) {
+        if (text == null) return null;
+        String trimmed = text.trim().replace(',', '.');
+        if (trimmed.isEmpty()) return null;
+        try {
+            float value = Float.parseFloat(trimmed);
+            return AltitudeCurve.isValidAltitude(value) ? value : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    public static boolean saveAltitude(Context context, boolean enabled, float min, float max) {
+        float[] range = new float[2];
+        if (!AltitudeCurve.normalizeRange(min, max, range)) return false;
+        prefs(context).edit()
+                .putBoolean(KEY_ALT_ENABLED, enabled)
+                .putFloat(KEY_ALT_MIN, range[0])
+                .putFloat(KEY_ALT_MAX, range[1])
+                .commit();
+        makeReadable(context);
+        return true;
     }
 
     /** @return 解析成功且大于 0 时返回数值，空串、非数字、0 或负数返回 null。 */

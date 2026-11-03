@@ -281,6 +281,9 @@ public class FloatingService extends Service {
         SharedPreferences sharedPrefs = ConfigStore.prefs(this);
         float minCadence = sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN);
         float maxCadence = sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX);
+        boolean altitudeOn = sharedPrefs.getBoolean(ConfigStore.KEY_ALT_ENABLED, false);
+        float minAltitude = sharedPrefs.getFloat(ConfigStore.KEY_ALT_MIN, AltitudeCurve.DEFAULT_MIN);
+        float maxAltitude = sharedPrefs.getFloat(ConfigStore.KEY_ALT_MAX, AltitudeCurve.DEFAULT_MAX);
         String token = ConfigStore.ensureToken(this);
         for (String pkg : ConfigStore.TARGET_PACKAGES) {
             Intent broadcastIntent = new Intent(ACTION_TOGGLE);
@@ -288,6 +291,9 @@ public class FloatingService extends Service {
             broadcastIntent.putExtra("STATE", isWorking);
             broadcastIntent.putExtra("MIN_CADENCE", minCadence);
             broadcastIntent.putExtra("MAX_CADENCE", maxCadence);
+            broadcastIntent.putExtra("ALT_ENABLED", altitudeOn);
+            broadcastIntent.putExtra("MIN_ALTITUDE", minAltitude);
+            broadcastIntent.putExtra("MAX_ALTITUDE", maxAltitude);
             broadcastIntent.putExtra("QUIET", quiet);
             broadcastIntent.putExtra("TOKEN", token);
             try {

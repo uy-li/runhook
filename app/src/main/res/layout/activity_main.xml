@@ -43,75 +43,200 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="自定义您的跑步频率区间"
+                    android:text="@string/settings_subtitle"
                     android:textAppearance="?attr/textAppearanceBodyLarge"
                     android:textColor="?android:attr/textColorSecondary" />
 
-                <TextView
-                    android:id="@+id/tv_slider_label"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="48dp"
-                    android:text="步频范围（步/分钟，可填任意正数）"
-                    android:textAppearance="?attr/textAppearanceTitleMedium" />
-
                 <LinearLayout
-                    android:id="@+id/cadence_inputs"
+                    android:id="@+id/range_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
+                    android:layout_marginTop="28dp"
                     android:baselineAligned="false"
                     android:orientation="horizontal">
 
-                    <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/input_min"
+                    <com.google.android.material.card.MaterialCardView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginEnd="8dp"
+                        android:layout_marginEnd="6dp"
                         android:layout_weight="1"
-                        android:hint="最低步频"
-                        app:errorEnabled="true"
-                        app:suffixText="步/分">
+                        app:cardBackgroundColor="?attr/colorSurface"
+                        app:cardElevation="0dp"
+                        app:strokeColor="?attr/colorOutline"
+                        app:strokeWidth="1dp">
 
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_min"
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:imeOptions="actionNext"
-                            android:inputType="numberDecimal"
-                            android:maxLines="1" />
-                    </com.google.android.material.textfield.TextInputLayout>
+                            android:orientation="vertical"
+                            android:paddingStart="12dp"
+                            android:paddingTop="12dp"
+                            android:paddingEnd="12dp"
+                            android:paddingBottom="8dp">
 
-                    <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/input_max"
+                            <TextView
+                                android:id="@+id/tv_slider_label"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/cadence_column_title"
+                                android:textAppearance="?attr/textAppearanceTitleMedium"
+                                android:textColor="?attr/colorOnSurface" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/cadence_column_hint"
+                                android:textAppearance="?attr/textAppearanceBodySmall"
+                                android:textColor="?android:attr/textColorSecondary" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/input_min"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:hint="@string/cadence_min_hint"
+                                android:minWidth="0dp"
+                                app:errorEnabled="true"
+                                app:suffixText="@string/cadence_suffix">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_min"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:imeOptions="actionNext"
+                                    android:inputType="numberDecimal"
+                                    android:maxLines="1"
+                                    android:minWidth="0dp" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/input_max"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="@string/cadence_max_hint"
+                                android:minWidth="0dp"
+                                app:errorEnabled="true"
+                                app:suffixText="@string/cadence_suffix">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_max"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:imeOptions="actionNext"
+                                    android:inputType="numberDecimal"
+                                    android:maxLines="1"
+                                    android:minWidth="0dp" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <TextView
+                                android:id="@+id/tv_slider_value"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:gravity="center_horizontal"
+                                android:text="172 - 182"
+                                android:textAppearance="?attr/textAppearanceTitleLarge"
+                                android:textColor="?attr/colorPrimary"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <com.google.android.material.card.MaterialCardView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
+                        android:layout_marginStart="6dp"
                         android:layout_weight="1"
-                        android:hint="最高步频"
-                        app:errorEnabled="true"
-                        app:suffixText="步/分">
+                        app:cardBackgroundColor="?attr/colorSurface"
+                        app:cardElevation="0dp"
+                        app:strokeColor="?attr/colorOutline"
+                        app:strokeWidth="1dp">
 
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/et_max"
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:imeOptions="actionDone"
-                            android:inputType="numberDecimal"
-                            android:maxLines="1" />
-                    </com.google.android.material.textfield.TextInputLayout>
+                            android:orientation="vertical"
+                            android:paddingStart="12dp"
+                            android:paddingTop="12dp"
+                            android:paddingEnd="12dp"
+                            android:paddingBottom="8dp">
+
+                            <TextView
+                                android:id="@+id/tv_alt_label"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/altitude_column_title"
+                                android:textAppearance="?attr/textAppearanceTitleMedium"
+                                android:textColor="?attr/colorOnSurface" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/altitude_column_hint"
+                                android:textAppearance="?attr/textAppearanceBodySmall"
+                                android:textColor="?android:attr/textColorSecondary" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/input_alt_min"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:hint="@string/altitude_min_hint"
+                                android:minWidth="0dp"
+                                app:errorEnabled="true"
+                                app:suffixText="@string/altitude_suffix">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_alt_min"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:imeOptions="actionNext"
+                                    android:inputType="numberSigned|numberDecimal"
+                                    android:maxLines="1"
+                                    android:minWidth="0dp" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/input_alt_max"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="@string/altitude_max_hint"
+                                android:minWidth="0dp"
+                                app:errorEnabled="true"
+                                app:suffixText="@string/altitude_suffix">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_alt_max"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:imeOptions="actionDone"
+                                    android:inputType="numberSigned|numberDecimal"
+                                    android:maxLines="1"
+                                    android:minWidth="0dp" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <TextView
+                                android:id="@+id/tv_alt_value"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:gravity="center_horizontal"
+                                android:text="30 - 80"
+                                android:textAppearance="?attr/textAppearanceTitleLarge"
+                                android:textColor="?attr/colorPrimary"
+                                android:textStyle="bold" />
+
+                            <com.google.android.material.switchmaterial.SwitchMaterial
+                                android:id="@+id/switch_altitude"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:contentDescription="@string/altitude_toggle_description"
+                                android:minWidth="0dp"
+                                android:minHeight="48dp"
+                                android:text="@string/altitude_toggle"
+                                android:textColor="?attr/colorOnSurface" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
                 </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tv_slider_value"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_horizontal"
-                    android:layout_marginTop="8dp"
-                    android:text="172 - 182"
-                    android:textAppearance="?attr/textAppearanceTitleLarge"
-                    android:textColor="?attr/colorPrimary"
-                    android:textStyle="bold" />
 
                 <com.google.android.material.card.MaterialCardView
                     android:layout_width="match_parent"
@@ -140,7 +265,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="12dp"
                             android:lineSpacingExtra="6dp"
-                            android:text="170~185：专业长跑/马拉松黄金步频\n150~160：轻松慢跑\n190+：极限冲刺\n也可以填上面这些范围以外的任意正数"
+                            android:text="@string/tip_body"
                             android:textAppearance="?attr/textAppearanceBodyMedium"
                             android:textColor="?attr/colorOnSecondaryContainer" />
                     </LinearLayout>
