@@ -17,14 +17,34 @@ android {
         }
     }
 
+    ndkVersion = "27.2.12479018"
+    buildFeatures {
+        prefab = true
+    }
+
     defaultConfig {
         applicationId = "com.uy_li.runhook"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     val keystorePath = runhookSetting("RUNHOOK_KEYSTORE_FILE")
@@ -37,6 +57,13 @@ android {
                 keyAlias = runhookSetting("RUNHOOK_KEY_ALIAS") ?: "fbly"
                 keyPassword = runhookSetting("RUNHOOK_KEY_PASSWORD") ?: storePassword
             }
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // prefab 和 CMake 都会带上同一份 libshadowhook.so
+            pickFirsts += listOf("**/libshadowhook.so", "**/libshadowhook_nothing.so")
         }
     }
 
@@ -60,6 +87,8 @@ android {
 
 dependencies {
     compileOnly("de.robv.android.xposed:api:82")
+    // 2.0.1 要求 compileSdk 37，当前 AGP 9.1 只支持到 36。1.1.1 的 API 与钩子行为足够覆盖 API 24–35。
+    implementation("com.bytedance.android:shadowhook:1.1.1")
 
     implementation(libs.appcompat)
     implementation(libs.material)

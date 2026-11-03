@@ -23,7 +23,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="步频与海拔模拟模块" />
+            android:value="步频、海拔与运动传感器仿真" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
