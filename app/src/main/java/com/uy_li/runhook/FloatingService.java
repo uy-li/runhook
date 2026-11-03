@@ -26,7 +26,6 @@ import android.view.WindowManager;
 import android.widget.Button;
 
 public class FloatingService extends Service {
-    private static final String ACTION_TOGGLE = "com.uy_li.TOGGLE_CADENCE";
     private static final String CHANNEL_ID = "runhook_overlay";
     private static final int NOTIFICATION_ID = 1001;
 
@@ -46,14 +45,6 @@ public class FloatingService extends Service {
             reattachFloatingView();
         }
     };
-    private final Runnable syncRunnable = new Runnable() {
-        @Override
-        public void run() {
-            // 健康 App 被杀掉后新进程收不到上一次点击。定时把持久化状态再送一遍。
-            broadcastState(true);
-            mainHandler.postDelayed(this, 15000);
-        }
-    };
 
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override
@@ -65,9 +56,6 @@ public class FloatingService extends Service {
                     || Intent.ACTION_USER_PRESENT.equals(action)) {
                 // 自动锁屏会把非前台应用的悬浮窗从 WindowManager 里摘掉，解锁后要自己加回去。
                 scheduleReattach();
-            }
-            if (Intent.ACTION_SCREEN_ON.equals(action) || Intent.ACTION_USER_PRESENT.equals(action)) {
-                broadcastState(true);
             }
         }
     };
@@ -90,8 +78,6 @@ public class FloatingService extends Service {
             createFloatingView();
         }
         registerScreenReceiver();
-        // 把已经在跑的 Hook 进程同步到持久化状态。静默发送，避免每个目标应用都弹 Toast。
-        mainHandler.post(syncRunnable);
     }
 
     @Override
@@ -251,7 +237,6 @@ public class FloatingService extends Service {
                             float minCadence = sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN);
                             float maxCadence = sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX);
                             ConfigStore.setEnabled(FloatingService.this, isWorking, minCadence, maxCadence);
-                            broadcastState(false);
                         }
                         return true;
                 }
@@ -277,36 +262,9 @@ public class FloatingService extends Service {
         }
     }
 
-    private void broadcastState(boolean quiet) {
-        SharedPreferences sharedPrefs = ConfigStore.prefs(this);
-        float minCadence = sharedPrefs.getFloat(ConfigStore.KEY_MIN, ConfigStore.DEFAULT_MIN);
-        float maxCadence = sharedPrefs.getFloat(ConfigStore.KEY_MAX, ConfigStore.DEFAULT_MAX);
-        boolean altitudeOn = sharedPrefs.getBoolean(ConfigStore.KEY_ALT_ENABLED, false);
-        float minAltitude = sharedPrefs.getFloat(ConfigStore.KEY_ALT_MIN, AltitudeCurve.DEFAULT_MIN);
-        float maxAltitude = sharedPrefs.getFloat(ConfigStore.KEY_ALT_MAX, AltitudeCurve.DEFAULT_MAX);
-        String token = ConfigStore.ensureToken(this);
-        for (String pkg : ConfigStore.TARGET_PACKAGES) {
-            Intent broadcastIntent = new Intent(ACTION_TOGGLE);
-            broadcastIntent.setPackage(pkg);
-            broadcastIntent.putExtra("STATE", isWorking);
-            broadcastIntent.putExtra("MIN_CADENCE", minCadence);
-            broadcastIntent.putExtra("MAX_CADENCE", maxCadence);
-            broadcastIntent.putExtra("ALT_ENABLED", altitudeOn);
-            broadcastIntent.putExtra("MIN_ALTITUDE", minAltitude);
-            broadcastIntent.putExtra("MAX_ALTITUDE", maxAltitude);
-            broadcastIntent.putExtra("QUIET", quiet);
-            broadcastIntent.putExtra("TOKEN", token);
-            try {
-                sendBroadcast(broadcastIntent);
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
     @Override
     public void onDestroy() {
         mainHandler.removeCallbacks(reattachRunnable);
-        mainHandler.removeCallbacks(syncRunnable);
         try {
             unregisterReceiver(screenReceiver);
         } catch (Throwable ignored) {
